@@ -34,18 +34,18 @@ conn, cursor = init_db()
 
 # --- ሁኔታዎች (States) ---
 class AddProduct(StatesGroup):
-    name, price, size, description, phone, stock, photo = [State() for _ in range(7)]
+    name = State()
+    price = State()
+    size = State()
+    description = State()
+    phone = State()
+    stock = State()
+    photo = State()
 
 class CustomerOrder(StatesGroup):
-    waiting_for_size, waiting_for_phone, waiting_for_name = [State() for _ in range(3)]
-
-# --- ፋይሉን ለAdmin መላክ (Cloud Backup) ---
-async def sync_to_telegram():
-    try:
-        with open(db_path, 'rb') as db_file:
-            await bot.send_document(ADMIN_ID, db_file, caption="🔄 የዳታቤዝ ባክአፕ ተዘምኗል")
-    except Exception as e:
-        print(f"Sync error: {e}")
+    waiting_for_size = State()
+    waiting_for_phone = State()
+    waiting_for_name = State()
 
 # --- ቁልፎች ---
 def admin_kb():
@@ -68,65 +68,61 @@ def buy_button(shoe_id, shoe_name):
     kb.add(types.InlineKeyboardButton(text=f"🛍️ {shoe_name}ን እዘዝ", callback_data=f"buy_{shoe_id}"))
     return kb
 
-# --- Start & Admin Actions ---
+# --- 1. Start & Cancel (ሁሉንም Reset ለማድረግ) ---
 @dp.message_handler(commands=['start'], state="*")
 async def start(message: types.Message, state: FSMContext):
-    await state.finish()
+    await state.finish() # ማንኛውንም የተጀመረ ስራ ያቆማል
     if message.from_user.id == ADMIN_ID:
         await message.answer("እንኳን መጡ ባለቤት! ምን መስራት ይፈልጋሉ?", reply_markup=admin_kb())
     else:
         await message.answer("እንኳን ወደ <b>WOW Brand Shoes</b> በደህና መጡ! 👟", reply_markup=user_kb())
 
-@dp.message_handler(text="💾 ዳታቤዝ አውርድ", user_id=ADMIN_ID, state="*")
-async def download_db(message: types.Message):
-    await sync_to_telegram()
-
 @dp.message_handler(text="❌ አቋርጥ", state="*")
 async def cancel(message: types.Message, state: FSMContext):
     await state.finish()
-    await message.answer("ተቋርጧል", reply_markup=admin_kb() if message.from_user.id == ADMIN_ID else user_kb())
+    await message.answer("ሂደቱ ተቋርጧል።", reply_markup=admin_kb() if message.from_user.id == ADMIN_ID else user_kb())
 
-# --- የምዝገባ ሂደት ---
-@dp.message_handler(text="➕ አዲስ ጫማ መመዝገብ", user_id=ADMIN_ID)
-async def add_shoe(message: types.Message):
+# --- 2. የባለቤት ምዝገባ ሂደት (Add Product) ---
+@dp.message_handler(text="➕ አዲስ ጫማ መመዝገብ", user_id=ADMIN_ID, state=None)
+async def add_shoe_start(message: types.Message):
     await AddProduct.name.set()
-    await message.answer("የጫማውን ስም ያስገቡ:", reply_markup=cancel_kb())
+    await message.answer("የጫማውን ስም ያስገቡ (ለምሳሌ፦ Jordan 4):", reply_markup=cancel_kb())
 
 @dp.message_handler(state=AddProduct.name)
 async def process_name(message: types.Message, state: FSMContext):
     await state.update_data(name=message.text)
     await AddProduct.price.set()
-    await message.answer("ዋጋውን ያስገቡ:")
+    await message.answer("ዋጋውን ያስገቡ (በብር ብቻ):")
 
 @dp.message_handler(state=AddProduct.price)
 async def process_price(message: types.Message, state: FSMContext):
     await state.update_data(price=message.text)
     await AddProduct.size.set()
-    await message.answer("ሳይዝ (Size) ያስገቡ:")
+    await message.answer("መጠን (Size) ያስገቡ (ለምሳሌ፦ 40-44):")
 
 @dp.message_handler(state=AddProduct.size)
 async def process_size(message: types.Message, state: FSMContext):
     await state.update_data(size=message.text)
     await AddProduct.description.set()
-    await message.answer("መግለጫ (Description) ያስገቡ:")
+    await message.answer("ስለ ጫማው አጭር መግለጫ (Description) ያስገቡ:")
 
 @dp.message_handler(state=AddProduct.description)
 async def process_desc(message: types.Message, state: FSMContext):
     await state.update_data(description=message.text)
     await AddProduct.phone.set()
-    await message.answer("የመሸጫ ስልክ ያስገቡ:")
+    await message.answer("የመሸጫ ስልክ ቁጥር ያስገቡ:")
 
 @dp.message_handler(state=AddProduct.phone)
 async def process_phone(message: types.Message, state: FSMContext):
     await state.update_data(phone=message.text)
     await AddProduct.stock.set()
-    await message.answer("ብዛት (Stock) ያስገቡ:")
+    await message.answer("ያለውን ብዛት (Stock) ያስገቡ:")
 
 @dp.message_handler(state=AddProduct.stock)
 async def process_stock(message: types.Message, state: FSMContext):
     await state.update_data(stock=message.text)
     await AddProduct.photo.set()
-    await message.answer("ፎቶ ላኩልኝ:")
+    await message.answer("የጫማውን ፎቶ ላኩልኝ:")
 
 @dp.message_handler(content_types=['photo'], state=AddProduct.photo)
 async def process_photo(message: types.Message, state: FSMContext):
@@ -138,10 +134,9 @@ async def process_photo(message: types.Message, state: FSMContext):
                     data['description'], data['phone'], photo_id))
     conn.commit()
     await state.finish()
-    await message.answer("✅ ተመዝግቧል!", reply_markup=admin_kb())
-    await sync_to_telegram() # አውቶማቲክ ዳታቤዙን ይልክልሻል
+    await message.answer("<b>✅ ጫማው በትክክል ተመዝግቧል!</b>", reply_markup=admin_kb())
 
-# --- ጫማ ማሳያ ---
+# --- 3. ጫማዎችን የማሳያ ተግባር ---
 def format_caption(item):
     return (f"👟 <b>ስም: {item[1]}</b>\n💰 ዋጋ: {item[2]} ብር\n📏 ሳይዝ: {item[4]}\n"
             f"📝 መግለጫ: {item[5]}\n📞 ስልክ: {item[6]}\n📦 ሁኔታ: {'✅ አለ' if int(item[3]) > 0 else '❌ አልቋል'}")
@@ -158,7 +153,7 @@ async def show_shoes(message: types.Message, state: FSMContext):
         await bot.send_photo(message.chat.id, item[7], caption=format_caption(item), 
                              reply_markup=buy_button(item[0], item[1]))
 
-# --- የትዕዛዝ ሂደት (Order Flow) ---
+# --- 4. የትዕዛዝ ሂደት (Customer Order Flow) ---
 @dp.callback_query_handler(lambda c: c.data.startswith('buy_'), state="*")
 async def start_order(callback_query: types.CallbackQuery, state: FSMContext):
     shoe_id = callback_query.data.split('_')[1]
@@ -183,34 +178,36 @@ async def order_phone(message: types.Message, state: FSMContext):
 @dp.message_handler(state=CustomerOrder.waiting_for_name)
 async def order_final(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    await message.answer("✅ ትዕዛዝዎ ተልኳል!", reply_markup=user_kb())
-    admin_msg = (f"🚨 <b>አዲስ ትዕዛዝ!</b>\n\n👟 {data['order_shoe_name']}\n📏 ሳይዝ: {data['customer_size']}\n"
-                 f"👤 ደንበኛ: {message.text}\n📞 ስልክ: {data['customer_phone']}")
+    customer_name = message.text
+    await message.answer("<b>✅ ትዕዛዝዎ ተልኳል! እናመሰግናለን።</b>", reply_markup=user_kb())
+    admin_msg = (f"🚨 <b>አዲስ ትዕዛዝ!</b>\n\n👟 ጫማ: {data['order_shoe_name']}\n📏 ሳይዝ: {data['customer_size']}\n"
+                 f"👤 ደንበኛ: {customer_name}\n📞 ስልክ: {data['customer_phone']}")
     cursor.execute("SELECT photo_id FROM shoes WHERE id=?", (data['order_shoe_id'],))
     photo = cursor.fetchone()
     await bot.send_photo(ADMIN_ID, photo[0], caption=admin_msg)
     await state.finish()
 
-# --- ጫማ መፈለጊያ ---
-@dp.message_handler(state=None)
+# --- 5. የፍለጋ ተግባር (በጣም መጨረሻ ላይ መሆን አለበት) ---
+@dp.message_handler(state=None) # state=None ማለት ምንም አይነት ሂደት ላይ ካልሆንክ ብቻ ይሰራል
 async def search_shoes(message: types.Message):
-    if message.text in ["📞 ስለ እኛ", "👟 ጫማዎችን እይ", "💾 ዳታቤዝ አውርድ"]: return
+    # ትዕዛዝ ያልሆኑ ጽሁፎችን ብቻ እንዲፈልግ
+    if message.text.startswith('/') or message.text in ["➕ አዲስ ጫማ መመዝገብ", "👟 ያሉ ጫማዎች", "💾 ዳታቤዝ አውርድ", "📞 ስለ እኛ", "👟 ጫማዎችን እይ"]:
+        return
+    
     cursor.execute("SELECT * FROM shoes WHERE name LIKE ?", (f'%{message.text}%',))
     results = cursor.fetchall()
     if not results:
-        await message.answer("አልተገኘም")
+        await message.answer("<b>ይቅርታ፣ በዚህ ስም የተመዘገበ ጫማ አልተገኘም።</b>")
         return
     for row in results:
         await bot.send_photo(message.chat.id, row[7], caption=format_caption(row), reply_markup=buy_button(row[0], row[1]))
 
-# --- ዳታቤዝን መልሶ መጫኛ (Restore) ---
-@dp.message_handler(content_types=['document'], user_id=ADMIN_ID)
-async def restore_db(message: types.Message):
-    if message.document.file_name == 'shoe_store.db':
-        await message.document.download(destination_file=db_path)
-        await message.answer("✅ ዳታቤዙ በትክክል ታድሷል! ቦቱን እንደገና ያስነሱ።")
-    else:
-        await message.answer("❌ እባክዎ 'shoe_store.db' የሚለውን ፋይል ብቻ ይላኩ።")
+# --- ዳታቤዝ ዳውንሎድ ---
+@dp.message_handler(text="💾 ዳታቤዝ አውርድ", user_id=ADMIN_ID, state="*")
+async def download_db(message: types.Message):
+    with open(db_path, 'rb') as db_file:
+        await message.answer_document(db_file, caption="የዳታቤዝ ፋይል")
 
 if __name__ == '__main__':
+    print("ዘመናዊው ቦት ስራ ጀምሯል...")
     executor.start_polling(dp, skip_updates=True)
