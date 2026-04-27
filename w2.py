@@ -6,20 +6,21 @@ from aiogram.utils import executor
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # --- ቅንብሮች ---
 API_TOKEN = '8279546444:AAGUR4WA44Aw-LCi-2aov0j98xBB9KTdrcc'
 ADMIN_ID = 1623014823 
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-db_path = os.path.join(BASE_DIR, "shoe_store.db")
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN, parse_mode=types.ParseMode.HTML)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
-# --- ዳታቤዝ ማዘጋጀት ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+db_path = os.path.join(BASE_DIR, "shoe_store.db")
+
+# --- ዳታቤዝ ---
 def init_db():
     conn = sqlite3.connect(db_path, check_same_thread=False)
     cursor = conn.cursor()
@@ -42,163 +43,153 @@ class AddProduct(StatesGroup):
     stock = State()
     photo = State()
 
-class CustomerOrder(StatesGroup):
-    waiting_for_size = State()
-    waiting_for_phone = State()
-    waiting_for_name = State()
-
 # --- ቁልፎች ---
-def admin_kb():
+def main_menu(user_id):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    kb.add("➕ አዲስ ጫማ መመዝገብ", "👟 ያሉ ጫማዎች")
-    return kb
-
-def user_kb():
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    kb.add("👟 ጫማዎችን እይ", "📞 ስለ እኛ")
+    if user_id == ADMIN_ID:
+        kb.add("➕ አዲስ ጫማ", "📋 ያሉ ጫማዎች", "💾 Database Backup")
+    else:
+        kb.add("📋 ያሉ ጫማዎች", "🔍 ፈልግ")
     return kb
 
 def cancel_kb():
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True).add("❌ አቋርጥ")
-    return kb
+    return types.ReplyKeyboardMarkup(resize_keyboard=True).add("❌ አቋርጥ")
 
-def buy_button(shoe_id, shoe_name):
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton(text=f"🛍️ {shoe_name}ን እዘዝ", callback_data=f"buy_{shoe_id}"))
-    return kb
+def order_button(shoe_id, shoe_name):
+    btn = InlineKeyboardMarkup()
+    btn.add(InlineKeyboardButton(text=f"🛍️ {shoe_name}ን እዘዝ", callback_data=f"order_{shoe_id}"))
+    return btn
 
-# --- 1. Start & Reset ---
+# --- 1. Start & Cancel ---
 @dp.message_handler(commands=['start'], state="*")
 async def start(message: types.Message, state: FSMContext):
     await state.finish()
-    if message.from_user.id == ADMIN_ID:
-        await message.answer("እንኳን መጡ ባለቤት! ምን መስራት ይፈልጋሉ?", reply_markup=admin_kb())
-    else:
-        await message.answer("እንኳን ወደ <b>WOW Brand Shoes</b> በደህና መጡ! 👟", reply_markup=user_kb())
+    await message.answer("እንኳን ወደ <b>Wow Brand</b> ጫማ መደብር በሰላም መጡ! 👟", reply_markup=main_menu(message.from_user.id))
 
 @dp.message_handler(text="❌ አቋርጥ", state="*")
 async def cancel(message: types.Message, state: FSMContext):
     await state.finish()
-    await message.answer("ተቋርጧል", reply_markup=admin_kb() if message.from_user.id == ADMIN_ID else user_kb())
+    await message.answer("ሂደቱ ተቋርጧል።", reply_markup=main_menu(message.from_user.id))
 
-# --- 2. የምዝገባ ሂደት (Admin Only) ---
-@dp.message_handler(text="➕ አዲስ ጫማ መመዝገብ", user_id=ADMIN_ID)
+# --- 2. የባለቤት ክፍል (Database Backup) ---
+@dp.message_handler(text="💾 Database Backup", user_id=ADMIN_ID, state="*")
+async def send_db(message: types.Message):
+    if os.path.exists(db_path):
+        with open(db_path, 'rb') as db_file:
+            await bot.send_document(ADMIN_ID, db_file, caption="የዛሬው የዳታቤዝ መረጃ (Backup)")
+    else:
+        await message.answer("ዳታቤዙ ገና አልተፈጠረም።")
+
+# --- 3. አዲስ ጫማ መመዝገቢያ (AddProduct flow) ---
+@dp.message_handler(text="➕ አዲስ ጫማ", user_id=ADMIN_ID)
 async def add_shoe(message: types.Message):
     await AddProduct.name.set()
     await message.answer("የጫማውን ስም ያስገቡ:", reply_markup=cancel_kb())
 
 @dp.message_handler(state=AddProduct.name)
-async def process_name(message: types.Message, state: FSMContext):
-    await state.update_data(name=message.text)
-    await AddProduct.price.set()
-    await message.answer("ዋጋውን ያስገቡ (በብር):")
+async def proc_name(m: types.Message, state: FSMContext):
+    await state.update_data(name=m.text)
+    await AddProduct.next()
+    await m.answer("ዋጋውን ያስገቡ:")
 
 @dp.message_handler(state=AddProduct.price)
-async def process_price(message: types.Message, state: FSMContext):
-    await state.update_data(price=message.text)
-    await AddProduct.size.set()
-    await message.answer("ሳይዝ (Size) ያስገቡ (ምሳሌ: 40-44):")
+async def proc_price(m: types.Message, state: FSMContext):
+    await state.update_data(price=m.text)
+    await AddProduct.next()
+    await m.answer("መጠን (Size) ያስገቡ (ምሳሌ: 40-44):")
 
 @dp.message_handler(state=AddProduct.size)
-async def process_size(message: types.Message, state: FSMContext):
-    await state.update_data(size=message.text)
-    await AddProduct.description.set()
-    await message.answer("ስለ ጫማው መግለጫ (Description) ያስገቡ:")
+async def proc_size(m: types.Message, state: FSMContext):
+    await state.update_data(size=m.text)
+    await AddProduct.next()
+    await m.answer("ስለ ጫማው አጭር መግለጫ ያስገቡ:")
 
 @dp.message_handler(state=AddProduct.description)
-async def process_desc(message: types.Message, state: FSMContext):
-    await state.update_data(description=message.text)
-    await AddProduct.phone.set()
-    await message.answer("የመሸጫ ስልክ ያስገቡ:")
+async def proc_desc(m: types.Message, state: FSMContext):
+    await state.update_data(description=m.text)
+    await AddProduct.next()
+    await m.answer("የእርሶን ስልክ ቁጥር ያስገቡ:")
 
 @dp.message_handler(state=AddProduct.phone)
-async def process_phone(message: types.Message, state: FSMContext):
-    await state.update_data(phone=message.text)
-    await AddProduct.stock.set()
-    await message.answer("ብዛት (Stock) ያስገቡ:")
+async def proc_phone(m: types.Message, state: FSMContext):
+    await state.update_data(phone=m.text)
+    await AddProduct.next()
+    await m.answer("ያለውን ብዛት (Stock) ያስገቡ:")
 
 @dp.message_handler(state=AddProduct.stock)
-async def process_stock(message: types.Message, state: FSMContext):
-    await state.update_data(stock=message.text)
-    await AddProduct.photo.set()
-    await message.answer("ፎቶ ላኩልኝ:")
+async def proc_stock(m: types.Message, state: FSMContext):
+    await state.update_data(stock=m.text)
+    await AddProduct.next()
+    await m.answer("አሁን የጫማውን ፎቶ ላኩልኝ:")
 
 @dp.message_handler(content_types=['photo'], state=AddProduct.photo)
-async def process_photo(message: types.Message, state: FSMContext):
+async def proc_photo(m: types.Message, state: FSMContext):
     data = await state.get_data()
-    photo_id = message.photo[-1].file_id
+    photo_id = m.photo[-1].file_id
     cursor.execute('''INSERT INTO shoes (name, price, stock, size, description, phone, photo_id) 
                       VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                   (data['name'], data['price'], data['stock'], data['size'], 
-                    data['description'], data['phone'], photo_id))
+                   (data.get('name'), data.get('price'), data.get('stock'), data.get('size'), 
+                    data.get('description'), data.get('phone'), photo_id))
     conn.commit()
     await state.finish()
-    await message.answer("✅ በትክክል ተመዝግቧል!", reply_markup=admin_kb())
+    await m.answer("✅ ጫማው ተመዝግቧል!", reply_markup=main_menu(ADMIN_ID))
+    
+    # አውቶማቲክ ባካፕ
+    with open(db_path, 'rb') as db_file:
+        await bot.send_document(ADMIN_ID, db_file, caption=f"አዲስ ጫማ ተመዝግቧል: {data.get('name')}")
 
-# --- 3. ጫማዎችን የማሳያ ተግባር ---
+# --- 4. የትዕዛዝ ሂደት (Order Flow) ---
+@dp.callback_query_handler(lambda c: c.data.startswith('order_'))
+async def process_order(callback_query: types.CallbackQuery):
+    shoe_id = callback_query.data.split('_')[1]
+    cursor.execute("SELECT name FROM shoes WHERE id=?", (shoe_id,))
+    shoe = cursor.fetchone()
+    user = callback_query.from_user
+    
+    # ለባለቤቱ ማሳወቂያ መላክ
+    order_text = (f"🔔 <b>አዲስ ትዕዛዝ!</b>\n\n"
+                  f"👤 ደንበኛ: {user.full_name}\n"
+                  f"🆔 ID: <code>{user.id}</code>\n"
+                  f"👟 ጫማ: {shoe[0] if shoe else 'ያልታወቀ'}")
+    
+    await bot.send_message(ADMIN_ID, order_text)
+    await bot.answer_callback_query(callback_query.id, "ትዕዛዝዎ ለባለቤቱ ደርሷል! በቅርቡ ያነጋግሩዎታል።", show_alert=True)
+
+# --- 5. ጫማዎችን ማሳያ ---
 def format_caption(item):
-    return (f"👟 <b>ስም: {item[1]}</b>\n💰 ዋጋ: {item[2]} ብር\n📏 ሳይዝ: {item[4]}\n"
-            f"📝 መግለጫ: {item[5]}\n📦 ሁኔታ: {'✅ አለ' if int(item[3]) > 0 else '❌ አልቋል'}")
+    return (f"👟 <b>ስም: {item[1]}</b>\n"
+            f"💰 <b>ዋጋ: {item[2]} ብር</b>\n"
+            f"📏 <b>Size: {item[4]}</b>\n"
+            f"📝 <b>መግለጫ:</b> {item[5]}\n"
+            f"📞 <b>ስልክ:</b> {item[6]}")
 
-@dp.message_handler(text=["👟 ጫማዎችን እይ", "👟 ያሉ ጫማዎች"], state="*")
+@dp.message_handler(text="📋 ያሉ ጫማዎች", state="*")
 async def show_shoes(message: types.Message, state: FSMContext):
     await state.finish()
     cursor.execute("SELECT * FROM shoes")
     items = cursor.fetchall()
     if not items:
-        await message.answer("ምንም ጫማ የለም።")
+        await message.answer("ምንም የተመዘገበ ጫማ የለም።")
         return
     for item in items:
-        await bot.send_photo(message.chat.id, item[7], caption=format_caption(item), 
-                             reply_markup=buy_button(item[0], item[1]))
+        await bot.send_photo(message.chat.id, item[7], caption=format_caption(item), reply_markup=order_button(item[0], item[1]))
 
-# --- 4. መፈለጊያ (Search) - እዚህ ጋር ነው ስህተቱ የነበረው ---
-@dp.message_handler(state=None) # ይህ የሚሰራው ምንም ሂደት ላይ ካልሆንሽ ብቻ ነው
-async def search_shoes(message: types.Message):
-    # አዝራሮችን ችላ እንዲል
-    if message.text in ["📞 ስለ እኛ", "➕ አዲስ ጫማ መመዝገብ", "👟 ጫማዎችን እይ"]: return
-    
+# --- 6. የፍለጋ ተግባር (በጣም መጨረሻ ላይ መሆን አለበት) ---
+@dp.message_handler(state=None)
+async def search_or_find(message: types.Message):
+    if message.text in ["🔍 ፈልግ", "🔍"]:
+        await message.answer("ለመፈለግ የጫማውን ስም ይጻፉልኝ:")
+        return
+
     cursor.execute("SELECT * FROM shoes WHERE name LIKE ?", (f'%{message.text}%',))
     results = cursor.fetchall()
     if not results:
-        await message.answer("ይቅርታ፣ በዚህ ስም የተመዘገበ ጫማ አልተገኘም።")
+        await message.answer("ይቅርታ፣ አልተገኘም። እባክዎ በትክክል ይጻፉ።")
         return
     for row in results:
-        await bot.send_photo(message.chat.id, row[7], caption=format_caption(row), 
-                             reply_markup=buy_button(row[0], row[1]))
+        await bot.send_photo(message.chat.id, row[7], caption=format_caption(row), reply_markup=order_button(row[0], row[1]))
 
-# --- 5. የግዢ ሂደት ---
-@dp.callback_query_handler(lambda c: c.data.startswith('buy_'), state="*")
-async def start_order(callback_query: types.CallbackQuery, state: FSMContext):
-    shoe_id = callback_query.data.split('_')[1]
-    cursor.execute("SELECT name, price FROM shoes WHERE id=?", (shoe_id,))
-    shoe = cursor.fetchone()
-    await state.update_data(order_shoe_name=shoe[0], order_shoe_price=shoe[1], order_shoe_id=shoe_id)
-    await CustomerOrder.waiting_for_size.set()
-    await bot.send_message(callback_query.from_user.id, f"ለ {shoe[0]} የሚፈልጉትን ሳይዝ ይጻፉ:", reply_markup=cancel_kb())
-
-@dp.message_handler(state=CustomerOrder.waiting_for_size)
-async def order_size(message: types.Message, state: FSMContext):
-    await state.update_data(customer_size=message.text)
-    await CustomerOrder.waiting_for_phone.set()
-    await message.answer("ስልክ ቁጥርዎን ያስገቡ:")
-
-@dp.message_handler(state=CustomerOrder.waiting_for_phone)
-async def order_phone(message: types.Message, state: FSMContext):
-    await state.update_data(customer_phone=message.text)
-    await CustomerOrder.waiting_for_name.set()
-    await message.answer("ሙሉ ስምዎን ያስገቡ:")
-
-@dp.message_handler(state=CustomerOrder.waiting_for_name)
-async def order_final(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    await message.answer("✅ ትዕዛዝዎ ተልኳል!", reply_markup=user_kb())
-    admin_msg = (f"🚨 <b>አዲስ ትዕዛዝ!</b>\n\n👟 {data['order_shoe_name']}\n📏 ሳይዝ: {data['customer_size']}\n"
-                 f"👤 ደንበኛ: {message.text}\n📞 ስልክ: {data['customer_phone']}")
-    cursor.execute("SELECT photo_id FROM shoes WHERE id=?", (data['order_shoe_id'],))
-    photo = cursor.fetchone()
-    await bot.send_photo(ADMIN_ID, photo[0], caption=admin_msg)
-    await state.finish()
-
+# --- ቦቱን ማስነሳት ---
 if __name__ == '__main__':
+    print("ቦቱ ስራ ጀምሯል...")
     executor.start_polling(dp, skip_updates=True)
