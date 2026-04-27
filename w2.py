@@ -8,7 +8,7 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 
 # --- ቅንብሮች (Settings) ---
-API_TOKEN = '8279546444:AAGwB_hc6gjvPe3_pBlSPdl7eRFFjV8d9nw'
+API_TOKEN = '8279546444:AAGUR4WA44Aw-LCi-2aov0j98xBB9KTdrcc'
 ADMIN_ID = 1623014823  # የራስሽን_ID_እዚህ_አስገቢ (ለምሳሌ፡ 56789012)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
